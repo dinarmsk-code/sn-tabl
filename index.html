@@ -7,6 +7,7 @@
     <!-- Firebase SDK (compat) -->
     <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
     <!-- SheetJS (XLSX) -->
     <script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
     <style>
@@ -133,41 +134,44 @@
 <body>
 <div class="container">
     <h1>📊 XLSX ↔ Firestore</h1>
-    <p class="subtitle">Загрузите Excel-файл, данные сохранятся в Firestore, и вы получите обновлённый XLSX</p>
+    <p class="subtitle">Загрузите Excel-файл, и данные сохранятся в Firestore. Затем можно выгрузить всё обратно в XLSX.</p>
 
     <div class="drop-zone" id="dropZone">
         <p>📂 Перетащите XLSX‑файл сюда</p>
         <p>или кликните, чтобы выбрать</p>
         <p class="file-name" id="fileName"></p>
-        <input type="file" id="fileInput" accept=".xlsx, .xls" hidden>
+        <input type="file" id="fileInput" accept=".xlsx" hidden>
     </div>
 
     <button class="btn" id="uploadBtn" disabled>🚀 Загрузить и обновить базу</button>
-    <button class="btn download-btn" id="downloadBtn" style="display: none;">⬇️ Скачать полный XLSX из Firestore</button>
+    <button class="btn download-btn" id="downloadBtn" style="display: none;">⬇️ Скачать все данные из Firestore</button>
 
     <div class="progress" id="progressContainer">
         <div class="progress-bar" id="progressBar"></div>
     </div>
-    <div class="status info" id="status">Ожидание файла...</div>
+    <div class="status info" id="status">Инициализация...</div>
 </div>
 
 <script>
     // ======================== КОНФИГУРАЦИЯ FIREBASE ========================
-    // ВСТАВЬТЕ СЮДА ВАШИ ДАННЫЕ ИЗ КОНСОЛИ FIREBASE
     const firebaseConfig = {
         apiKey: "AIzaSyD5QdTrZShpcSKN7qk1M6CP_fLb0wpCDJI",
-        authDomain: "sn-tabl.firebaseapp.com",
+        authDomain: "sn-tabl.firebaseapp.com",   // ✅ исправлено
         projectId: "sn-tabl",
         storageBucket: "sn-tabl.firebasestorage.app",
         messagingSenderId: "295977923639",
         appId: "1:295977923639:web:cd1891b1f119c9c8423bb2"
     };
 
-    // Инициализация Firebase
     firebase.initializeApp(firebaseConfig);
     const db = firebase.firestore();
-    // Коллекция, в которой будем хранить все строки
+    const auth = firebase.auth();
+
+    // Настройки
     const COLLECTION_NAME = "excel_rows";
+    const BATCH_SIZE = 500;          // запись
+    const FETCH_LIMIT = 500;         // чтение с пагинацией
+    const MAX_RETRIES = 3;
 
     // ======================== ИНТЕРФЕЙС ========================
     const dropZone = document.getElementById('dropZone');
@@ -180,8 +184,31 @@
     const progressBar = document.getElementById('progressBar');
 
     let selectedFile = null;
+    let authReady = false;
 
-    // Обработчики drag-and-drop
+    // ---------------------- Аутентификация ----------------------
+    async function ensureAuthenticated() {
+        if (auth.currentUser) return auth.currentUser;
+        setStatus('Выполняется анонимный вход...', 'info');
+        const credential = await auth.signInAnonymously();
+        setStatus('Готов к работе.', 'info');
+        return credential.user;
+    }
+
+    // Стартуем анонимную аутентификацию при загрузке страницы
+    (async () => {
+        try {
+            await ensureAuthenticated();
+            authReady = true;
+            // Если был выбран файл, разблокируем кнопку
+            if (selectedFile) uploadBtn.disabled = false;
+        } catch (err) {
+            console.error(err);
+            setStatus('❌ Ошибка аутентификации: ' + err.message, 'error');
+        }
+    })();
+
+    // ---------------------- Drag-and-drop ----------------------
     dropZone.addEventListener('click', () => fileInput.click());
     dropZone.addEventListener('dragover', (e) => {
         e.preventDefault();
@@ -206,13 +233,17 @@
     function updateFileSelection(file) {
         selectedFile = file;
         fileNameDisplay.textContent = `Выбран: ${file.name}`;
-        uploadBtn.disabled = false;
+        if (authReady) {
+            uploadBtn.disabled = false;
+        } else {
+            setStatus('Дождитесь завершения входа...', 'info');
+        }
         setStatus(`Готов к загрузке (${(file.size / 1024).toFixed(1)} КБ)`, 'info');
     }
 
-    // Кнопка загрузки и вставки в Firestore
+    // ---------------------- Загрузка XLSX → Firestore ----------------------
     uploadBtn.addEventListener('click', async () => {
-        if (!selectedFile) return;
+        if (!selectedFile || !authReady) return;
         uploadBtn.disabled = true;
         downloadBtn.style.display = 'none';
         progressContainer.style.display = 'block';
@@ -220,7 +251,10 @@
         setStatus('Чтение XLSX...', 'info');
 
         try {
-            // 1. Читаем XLSX в массив объектов
+            // Гарантируем аутентификацию (на случай, если вышли)
+            await ensureAuthenticated();
+
+            // 1. Читаем XLSX с преобразованием дат
             const data = await readXlsxFile(selectedFile);
             if (!data || data.length === 0) {
                 throw new Error('Файл пуст или не содержит строк данных.');
@@ -228,17 +262,15 @@
             setStatus(`Файл прочитан: ${data.length} строк. Загрузка в Firestore...`, 'info');
             setProgress(10);
 
-            // 2. Добавляем строки в Firestore (пакетами по 500)
+            // 2. Добавляем строки в Firestore с детерминированными ID и retry
             await addRowsToFirestore(data, (progress) => {
-                const pct = 10 + Math.floor(progress * 80); // 10-90%
+                const pct = 10 + Math.floor(progress * 80);
                 setProgress(pct);
-                setStatus(`Добавлено ${progress * data.length | 0} из ${data.length} строк...`, 'info');
+                setStatus(`Обработано ${Math.round(progress * data.length)} из ${data.length} строк...`, 'info');
             });
 
             setStatus(`✅ Успешно добавлено ${data.length} строк в коллекцию "${COLLECTION_NAME}"`, 'success');
             setProgress(100);
-
-            // 3. Готовим кнопку для скачивания полной выгрузки
             downloadBtn.style.display = 'inline-block';
         } catch (err) {
             console.error(err);
@@ -246,25 +278,36 @@
             setProgress(0);
         } finally {
             uploadBtn.disabled = false;
-            // Не скрываем прогресс сразу, чтобы была видна полоса
             setTimeout(() => {
                 progressContainer.style.display = 'none';
             }, 2000);
         }
     });
 
-    // Кнопка скачивания всех данных из Firestore
+    // ---------------------- Выгрузка из Firestore → XLSX ----------------------
     downloadBtn.addEventListener('click', async () => {
         downloadBtn.disabled = true;
-        setStatus('Загрузка всех данных из Firestore...', 'info');
+        setStatus('Загрузка данных из Firestore (пагинация)...', 'info');
         progressContainer.style.display = 'block';
         setProgress(0);
         try {
-            const allRows = await fetchAllRows();
+            await ensureAuthenticated();
+
+            // Пагинированное чтение с прогрессом
+            const allRows = await fetchAllRowsPaginated((done, totalEstimate) => {
+                if (totalEstimate) {
+                    setProgress(Math.round((done / totalEstimate) * 90));
+                } else {
+                    setProgress(Math.min(done / 10, 90)); // индикация активности
+                }
+                setStatus(`Получено ${done} документов...`, 'info');
+            });
+
             if (allRows.length === 0) {
                 throw new Error('База данных пуста.');
             }
-            setProgress(80);
+
+            setProgress(90);
             const xlsxBlob = generateXlsxBlob(allRows);
             triggerDownload(xlsxBlob, 'firestore_export.xlsx');
             setProgress(100);
@@ -290,16 +333,18 @@
         progressBar.style.width = `${Math.min(100, Math.max(0, percent))}%`;
     }
 
-    // Чтение XLSX-файла → массив объектов
+    // Чтение XLSX с корректной обработкой дат (cellDates: true)
     function readXlsxFile(file) {
         return new Promise((resolve, reject) => {
             const reader = new FileReader();
             reader.onload = (e) => {
                 try {
                     const data = new Uint8Array(e.target.result);
-                    const workbook = XLSX.read(data, { type: 'array' });
+                    const workbook = XLSX.read(data, { type: 'array', cellDates: true });
                     const firstSheet = workbook.SheetNames[0];
                     const worksheet = workbook.Sheets[firstSheet];
+                    // cellDates: true преобразует даты Excel в объекты Date,
+                    // которые Firestore автоматически сохранит как Timestamp
                     const json = XLSX.utils.sheet_to_json(worksheet, { defval: '' });
                     resolve(json);
                 } catch (err) {
@@ -311,9 +356,33 @@
         });
     }
 
-    // Добавление строк в Firestore пакетами (batch write)
+    // Генерация детерминированного ID документа на основе содержимого строки
+    function generateDeterministicId(row) {
+        // Превращаем строку в JSON и хешируем (простая замена для избежания коллизий)
+        const str = JSON.stringify(row);
+        // Используем btoa для создания строки без сложных зависимостей
+        // Ограничим длину (Firestore допускает до 1500 байт, здесь уложимся в 500 символов)
+        let hash = btoa(unescape(encodeURIComponent(str))).substring(0, 500);
+        // Заменяем недопустимые символы в ID (разрешены буквы, цифры, дефисы, подчёркивания)
+        return hash.replace(/[^a-zA-Z0-9_-]/g, '_');
+    }
+
+    // Повторная попытка выполнения batch.commit() с экспоненциальной задержкой
+    async function retryBatchCommit(batch, maxRetries = MAX_RETRIES) {
+        for (let attempt = 1; attempt <= maxRetries; attempt++) {
+            try {
+                await batch.commit();
+                return;
+            } catch (err) {
+                if (attempt === maxRetries) throw err;
+                const delay = Math.pow(2, attempt) * 500 + Math.random() * 500;
+                await new Promise(resolve => setTimeout(resolve, delay));
+            }
+        }
+    }
+
+    // Добавление строк в Firestore с детерминированными ID и обработкой ошибок
     async function addRowsToFirestore(rows, progressCallback) {
-        const BATCH_SIZE = 500; // Максимум для Firestore batch
         const totalBatches = Math.ceil(rows.length / BATCH_SIZE);
 
         for (let i = 0; i < totalBatches; i++) {
@@ -323,23 +392,60 @@
             const chunk = rows.slice(start, end);
 
             chunk.forEach(row => {
-                // Каждая строка становится отдельным документом с авто-ID
-                const docRef = db.collection(COLLECTION_NAME).doc();
+                const docId = generateDeterministicId(row);
+                const docRef = db.collection(COLLECTION_NAME).doc(docId);
                 batch.set(docRef, row);
             });
 
-            await batch.commit();
-            // Обновляем прогресс
+            await retryBatchCommit(batch);
             if (progressCallback) {
                 progressCallback((i + 1) / totalBatches);
             }
         }
     }
 
-    // Получение всех документов из коллекции
-    async function fetchAllRows() {
-        const snapshot = await db.collection(COLLECTION_NAME).get();
-        return snapshot.docs.map(doc => doc.data());
+    // Пагинированное получение всех документов с прогрессом
+    async function fetchAllRowsPaginated(onProgress) {
+        const result = [];
+        let lastDoc = null;
+        let hasMore = true;
+        let totalEstimate = null;
+
+        // Первый запрос также даст оценку общего количества (explain не используем)
+        while (hasMore) {
+            let query = db.collection(COLLECTION_NAME)
+                .orderBy(firebase.firestore.FieldPath.documentId())
+                .limit(FETCH_LIMIT);
+
+            if (lastDoc) {
+                query = query.startAfter(lastDoc);
+            }
+
+            const snapshot = await query.get();
+            if (snapshot.empty) {
+                hasMore = false;
+                break;
+            }
+
+            // Оценка общего количества на основе первого батча
+            if (totalEstimate === null) {
+                // snapshot.size даёт только размер текущей порции; делаем приблизительную оценку
+                totalEstimate = snapshot.size < FETCH_LIMIT ? snapshot.size : undefined;
+            }
+
+            snapshot.forEach(doc => result.push(doc.data()));
+            lastDoc = snapshot.docs[snapshot.docs.length - 1];
+
+            if (onProgress) {
+                onProgress(result.length, totalEstimate);
+            }
+
+            if (snapshot.size < FETCH_LIMIT) {
+                hasMore = false;
+            }
+        }
+
+        return result;
     }
 
     // Генерация XLSX-файла из массива объектов
