@@ -334,27 +334,67 @@
     }
 
     // Чтение XLSX с корректной обработкой дат (cellDates: true)
-    function readXlsxFile(file) {
-        return new Promise((resolve, reject) => {
-            const reader = new FileReader();
-            reader.onload = (e) => {
+function readXlsxFile(file) {
+    return new Promise((resolve, reject) => {
+        if (!file) {
+            return reject(new Error('Файл не выбран.'));
+        }
+        if (!file.name.match(/\.xlsx$/i)) {
+            return reject(new Error('Файл должен иметь расширение .xlsx. Получен: ' + file.name));
+        }
+        if (typeof XLSX === 'undefined') {
+            return reject(new Error('Библиотека XLSX не загружена. Проверьте подключение к CDN.'));
+        }
+
+        const reader = new FileReader();
+        reader.onerror = () => reject(new Error('Ошибка чтения файла. Возможно, файл повреждён.'));
+
+        reader.onload = (e) => {
+            try {
+                const data = new Uint8Array(e.target.result);
+                console.log(`Файл прочитан, размер: ${data.byteLength} байт`);
+
+                // Пробуем прочитать книгу
+                let workbook;
                 try {
-                    const data = new Uint8Array(e.target.result);
-                    const workbook = XLSX.read(data, { type: 'array', cellDates: true });
-                    const firstSheet = workbook.SheetNames[0];
-                    const worksheet = workbook.Sheets[firstSheet];
-                    // cellDates: true преобразует даты Excel в объекты Date,
-                    // которые Firestore автоматически сохранит как Timestamp
-                    const json = XLSX.utils.sheet_to_json(worksheet, { defval: '' });
-                    resolve(json);
-                } catch (err) {
-                    reject(new Error('Не удалось прочитать XLSX. Убедитесь, что формат корректен.'));
+                    workbook = XLSX.read(data, { type: 'array', cellDates: true });
+                } catch (readErr) {
+                    console.error('Ошибка XLSX.read:', readErr);
+                    return reject(new Error('Формат файла не поддерживается или файл повреждён. ' + readErr.message));
                 }
-            };
-            reader.onerror = () => reject(new Error('Ошибка чтения файла.'));
-            reader.readAsArrayBuffer(file);
-        });
-    }
+
+                if (!workbook.SheetNames || workbook.SheetNames.length === 0) {
+                    return reject(new Error('В книге не найдено ни одного листа.'));
+                }
+
+                const firstSheet = workbook.SheetNames[0];
+                const worksheet = workbook.Sheets[firstSheet];
+                if (!worksheet) {
+                    return reject(new Error('Лист "' + firstSheet + '" пуст или повреждён.'));
+                }
+
+                let json;
+                try {
+                    json = XLSX.utils.sheet_to_json(worksheet, { defval: '' });
+                } catch (sheetErr) {
+                    console.error('Ошибка sheet_to_json:', sheetErr);
+                    return reject(new Error('Не удалось преобразовать лист в JSON. ' + sheetErr.message));
+                }
+
+                if (!Array.isArray(json)) {
+                    return reject(new Error('Результат парсинга не является массивом.'));
+                }
+                console.log(`Успешно прочитано строк: ${json.length}`);
+                resolve(json);
+            } catch (err) {
+                console.error('Непредвиденная ошибка:', err);
+                reject(new Error('Внутренняя ошибка при обработке XLSX. ' + err.message));
+            }
+        };
+
+        reader.readAsArrayBuffer(file);
+    });
+}
 
     // Генерация детерминированного ID документа на основе содержимого строки
     function generateDeterministicId(row) {
