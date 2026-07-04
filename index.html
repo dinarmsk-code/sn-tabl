@@ -4,23 +4,10 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>XLSX → Firebase Firestore → XLSX</title>
-    <!-- Firebase SDK (compat) -->
     <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
-    <!-- Локальная библиотека XLSX (положите xlsx.full.min.js в эту же папку) -->
     <script src="xlsx.full.min.js"></script>
-    <script>
-        // Проверка, что библиотека загрузилась
-        window.addEventListener('load', function() {
-            if (typeof XLSX === 'undefined') {
-                document.getElementById('status').textContent = '❌ Файл xlsx.full.min.js не найден. Скачайте его и положите рядом с HTML.';
-                document.getElementById('status').className = 'status error';
-            } else {
-                console.log('✅ XLSX загружена (локально)');
-            }
-        });
-    </script>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body {
@@ -59,7 +46,7 @@
         .btn:not(:disabled):hover { background: #1565c0; }
         .btn:not(:disabled):active { transform: scale(0.98); }
         .download-btn { background: #2e7d32; }
-        .download-btn:hover { background: #1b5e20; }
+        .download-btn:hover:not(:disabled) { background: #1b5e20; }
         .status {
             margin-top: 20px; padding: 12px; border-radius: 12px; font-weight: 500; font-size: 14px;
         }
@@ -71,6 +58,7 @@
             margin-top: 16px; overflow: hidden; display: none;
         }
         .progress-bar { height: 100%; width: 0%; background: #1976d2; transition: width 0.3s; }
+        .warning-text { color: #b71c1c; font-size: 12px; margin-top: 8px; }
     </style>
 </head>
 <body>
@@ -86,16 +74,17 @@
     </div>
 
     <button class="btn" id="uploadBtn" disabled>🚀 Загрузить и обновить базу</button>
-    <button class="btn download-btn" id="downloadBtn" style="display: none;">⬇️ Скачать все данные из Firestore</button>
+    <button class="btn download-btn" id="downloadBtn">⬇️ Скачать все данные из Firestore</button>
 
     <div class="progress" id="progressContainer">
         <div class="progress-bar" id="progressBar"></div>
     </div>
     <div class="status info" id="status">Инициализация...</div>
+    <div class="warning-text" id="authWarning" style="display:none;">⚠️ Аутентификация не удалась. Проверьте настройки Firebase.</div>
 </div>
 
 <script>
-    // Проверка загрузки XLSX (если не загрузилось – останавливаем)
+    // Проверка библиотеки XLSX
     if (typeof XLSX === 'undefined') {
         document.getElementById('status').textContent = '❌ Библиотека XLSX не загружена. Скачайте xlsx.full.min.js и положите в папку с HTML.';
         document.getElementById('status').className = 'status error';
@@ -130,6 +119,7 @@
     const statusDiv = document.getElementById('status');
     const progressContainer = document.getElementById('progressContainer');
     const progressBar = document.getElementById('progressBar');
+    const authWarning = document.getElementById('authWarning');
 
     let selectedFile = null;
     let authReady = false;
@@ -141,23 +131,28 @@
             setStatus('Выполняется анонимный вход...', 'info');
             await auth.signInAnonymously();
             setStatus('Готов к работе.', 'info');
+            authReady = true;
+            uploadBtn.disabled = !selectedFile;
+            authWarning.style.display = 'none';
             return true;
         } catch (err) {
             console.warn('Анонимный вход не удался:', err.message);
+            authReady = false;
             setStatus('⚠️ Аутентификация отключена. Убедитесь, что правила Firestore разрешают открытый доступ.', 'info');
+            authWarning.style.display = 'block';
+            uploadBtn.disabled = true; // без аутентификации загрузка невозможна
             return false;
         }
     }
 
     (async () => {
         const ok = await ensureAuthenticated();
-        authReady = true;
+        // Если аутентификация не удалась, кнопка загрузки останется заблокированной
         if (ok) {
             console.log('Аутентификация выполнена');
         } else {
-            console.log('Продолжаем без аутентификации');
+            console.log('Аутентификация не требуется?');
         }
-        if (selectedFile) uploadBtn.disabled = false;
     })();
 
     // ---------------------- Drag-and-drop ----------------------
@@ -185,7 +180,8 @@
         if (authReady) {
             uploadBtn.disabled = false;
         } else {
-            setStatus('Дождитесь завершения входа...', 'info');
+            setStatus('Дождитесь входа или настройте аутентификацию...', 'info');
+            uploadBtn.disabled = true;
         }
         setStatus(`Готов к загрузке (${(file.size / 1024).toFixed(1)} КБ)`, 'info');
     }
@@ -194,13 +190,15 @@
     uploadBtn.addEventListener('click', async () => {
         if (!selectedFile || !authReady) return;
         uploadBtn.disabled = true;
-        downloadBtn.style.display = 'none';
+        downloadBtn.disabled = true;
         progressContainer.style.display = 'block';
         setProgress(0);
         setStatus('Чтение XLSX...', 'info');
 
         try {
+            // повторно убедимся, что аутентификация есть
             await ensureAuthenticated();
+            if (!authReady) throw new Error('Аутентификация не выполнена.');
             const data = await readXlsxFile(selectedFile);
             if (!data || data.length === 0) throw new Error('Файл пуст или не содержит строк данных.');
             setStatus(`Файл прочитан: ${data.length} строк. Загрузка в Firestore...`, 'info');
@@ -212,32 +210,35 @@
             });
             setStatus(`✅ Успешно добавлено ${data.length} строк в коллекцию "${COLLECTION_NAME}"`, 'success');
             setProgress(100);
-            downloadBtn.style.display = 'inline-block';
         } catch (err) {
             console.error(err);
             setStatus(`❌ Ошибка: ${err.message}`, 'error');
             setProgress(0);
         } finally {
             uploadBtn.disabled = false;
-            setTimeout(() => { progressContainer.style.display = 'none'; }, 2000);
+            downloadBtn.disabled = false;
+            // прогресс-бар не скрываем автоматически, оставляем пользователю видеть результат
+            setTimeout(() => {
+                if (progressBar.style.width === '100%') {
+                    progressContainer.style.display = 'none';
+                }
+            }, 3000);
         }
     });
 
     // ---------------------- Выгрузка из Firestore → XLSX ----------------------
     downloadBtn.addEventListener('click', async () => {
         downloadBtn.disabled = true;
-        setStatus('Загрузка данных из Firestore (пагинация)...', 'info');
+        uploadBtn.disabled = true;
+        setStatus('Загрузка данных из Firestore...', 'info');
         progressContainer.style.display = 'block';
         setProgress(0);
         try {
             await ensureAuthenticated();
-            const allRows = await fetchAllRowsPaginated((done, totalEstimate) => {
-                if (totalEstimate) {
-                    setProgress(Math.round((done / totalEstimate) * 90));
-                } else {
-                    setProgress(Math.min(done / 10, 90));
-                }
-                setStatus(`Получено ${done} документов...`, 'info');
+            const allRows = await fetchAllRowsPaginated((count) => {
+                setStatus(`Получено ${count} документов...`, 'info');
+                // прогресс-бар просто двигаем на 1% за каждые 50 документов, чисто для визуализации активности
+                setProgress(Math.min(count / 50, 90));
             });
             if (allRows.length === 0) throw new Error('База данных пуста.');
             setProgress(90);
@@ -250,7 +251,12 @@
             setStatus(`❌ Ошибка: ${err.message}`, 'error');
         } finally {
             downloadBtn.disabled = false;
-            setTimeout(() => { progressContainer.style.display = 'none'; }, 2000);
+            uploadBtn.disabled = !selectedFile;
+            setTimeout(() => {
+                if (progressBar.style.width === '100%') {
+                    progressContainer.style.display = 'none';
+                }
+            }, 3000);
         }
     });
 
@@ -270,7 +276,6 @@
             if (!file.name.match(/\.xlsx$/i)) {
                 return reject(new Error('Файл должен иметь расширение .xlsx. Получен: ' + file.name));
             }
-            // Теперь XLSX точно доступна, но проверим ещё раз
             if (typeof XLSX === 'undefined') {
                 return reject(new Error('Библиотека XLSX не загружена.'));
             }
@@ -312,12 +317,21 @@
 
     function generateDeterministicId(row) {
         const str = JSON.stringify(row);
-        let hash = btoa(unescape(encodeURIComponent(str))).substring(0, 500);
-        return hash.replace(/[^a-zA-Z0-9_-]/g, '_');
+        // Base64 от строки, заменяем недопустимые символы, обрезаем до максимально допустимой длины ID (1500 байт)
+        let hash = btoa(unescape(encodeURIComponent(str))).replace(/[^a-zA-Z0-9_-]/g, '_');
+        if (hash.length > 1500) {
+            hash = hash.substring(0, 1500);
+        }
+        return hash;
     }
 
-    async function retryBatchCommit(batch, maxRetries = MAX_RETRIES) {
+    async function commitChunkWithRetry(chunk, maxRetries = MAX_RETRIES) {
         for (let attempt = 1; attempt <= maxRetries; attempt++) {
+            const batch = db.batch();
+            chunk.forEach(row => {
+                const docId = generateDeterministicId(row);
+                batch.set(db.collection(COLLECTION_NAME).doc(docId), row);
+            });
             try {
                 await batch.commit();
                 return;
@@ -332,16 +346,10 @@
     async function addRowsToFirestore(rows, progressCallback) {
         const totalBatches = Math.ceil(rows.length / BATCH_SIZE);
         for (let i = 0; i < totalBatches; i++) {
-            const batch = db.batch();
             const start = i * BATCH_SIZE;
             const end = Math.min(start + BATCH_SIZE, rows.length);
             const chunk = rows.slice(start, end);
-            chunk.forEach(row => {
-                const docId = generateDeterministicId(row);
-                const docRef = db.collection(COLLECTION_NAME).doc(docId);
-                batch.set(docRef, row);
-            });
-            await retryBatchCommit(batch);
+            await commitChunkWithRetry(chunk);
             if (progressCallback) progressCallback((i + 1) / totalBatches);
         }
     }
@@ -350,7 +358,6 @@
         const result = [];
         let lastDoc = null;
         let hasMore = true;
-        let totalEstimate = null;
         while (hasMore) {
             let query = db.collection(COLLECTION_NAME)
                 .orderBy(firebase.firestore.FieldPath.documentId())
@@ -361,12 +368,9 @@
                 hasMore = false;
                 break;
             }
-            if (totalEstimate === null) {
-                totalEstimate = snapshot.size < FETCH_LIMIT ? snapshot.size : undefined;
-            }
             snapshot.forEach(doc => result.push(doc.data()));
             lastDoc = snapshot.docs[snapshot.docs.length - 1];
-            if (onProgress) onProgress(result.length, totalEstimate);
+            if (onProgress) onProgress(result.length);
             if (snapshot.size < FETCH_LIMIT) hasMore = false;
         }
         return result;
