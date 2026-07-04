@@ -8,8 +8,34 @@
     <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
-    <!-- SheetJS (XLSX) -->
-    <script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
+    <!-- Каскадная загрузка XLSX (фолбэк между CDN) -->
+    <script>
+        (function loadXLSX() {
+            const cdns = [
+                'https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js',
+                'https://unpkg.com/xlsx@0.20.1/dist/xlsx.full.min.js',
+                'https://cdn.jsdelivr.net/npm/xlsx@0.20.1/dist/xlsx.full.min.js',
+                'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.20.1/xlsx.full.min.js'
+            ];
+            let index = 0;
+            function tryNext() {
+                if (index >= cdns.length) {
+                    console.error('❌ Все CDN недоступны. Библиотека XLSX не загружена.');
+                    return;
+                }
+                const script = document.createElement('script');
+                script.src = cdns[index];
+                script.onload = () => console.log('✅ XLSX загружена с', cdns[index]);
+                script.onerror = () => {
+                    console.warn('⚠️ Не удалось загрузить с', cdns[index]);
+                    index++;
+                    tryNext();
+                };
+                document.head.appendChild(script);
+            }
+            tryNext();
+        })();
+    </script>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body {
@@ -30,105 +56,36 @@
             width: 100%;
             text-align: center;
         }
-        h1 {
-            font-size: 28px;
-            margin-bottom: 8px;
-            color: #1a1a2e;
-        }
-        .subtitle {
-            color: #666;
-            margin-bottom: 32px;
-            font-size: 14px;
-        }
+        h1 { font-size: 28px; margin-bottom: 8px; color: #1a1a2e; }
+        .subtitle { color: #666; margin-bottom: 32px; font-size: 14px; }
         .drop-zone {
-            border: 2px dashed #1976d2;
-            border-radius: 16px;
-            padding: 40px 20px;
-            background: #f8faff;
-            cursor: pointer;
-            transition: all 0.2s;
-            margin-bottom: 24px;
+            border: 2px dashed #1976d2; border-radius: 16px; padding: 40px 20px;
+            background: #f8faff; cursor: pointer; transition: all 0.2s; margin-bottom: 24px;
         }
-        .drop-zone.dragover {
-            background: #e3f2fd;
-            border-color: #0d47a1;
-            transform: scale(1.02);
-        }
-        .drop-zone p {
-            margin: 0;
-            font-weight: 500;
-            color: #333;
-        }
-        .drop-zone .file-name {
-            color: #1976d2;
-            font-weight: 600;
-            margin-top: 8px;
-            word-break: break-all;
-        }
+        .drop-zone.dragover { background: #e3f2fd; border-color: #0d47a1; transform: scale(1.02); }
+        .drop-zone p { margin: 0; font-weight: 500; color: #333; }
+        .drop-zone .file-name { color: #1976d2; font-weight: 600; margin-top: 8px; word-break: break-all; }
         .btn {
-            background: #1976d2;
-            color: white;
-            border: none;
-            padding: 14px 32px;
-            border-radius: 12px;
-            font-size: 16px;
-            font-weight: 600;
-            cursor: pointer;
-            transition: background 0.2s, transform 0.1s;
-            width: 100%;
-            margin-bottom: 12px;
+            background: #1976d2; color: white; border: none; padding: 14px 32px;
+            border-radius: 12px; font-size: 16px; font-weight: 600; cursor: pointer;
+            transition: background 0.2s, transform 0.1s; width: 100%; margin-bottom: 12px;
         }
-        .btn:disabled {
-            background: #90caf9;
-            cursor: not-allowed;
-            transform: none;
-        }
-        .btn:not(:disabled):hover {
-            background: #1565c0;
-        }
-        .btn:not(:disabled):active {
-            transform: scale(0.98);
-        }
-        .download-btn {
-            background: #2e7d32;
-        }
-        .download-btn:hover {
-            background: #1b5e20;
-        }
+        .btn:disabled { background: #90caf9; cursor: not-allowed; transform: none; }
+        .btn:not(:disabled):hover { background: #1565c0; }
+        .btn:not(:disabled):active { transform: scale(0.98); }
+        .download-btn { background: #2e7d32; }
+        .download-btn:hover { background: #1b5e20; }
         .status {
-            margin-top: 20px;
-            padding: 12px;
-            border-radius: 12px;
-            font-weight: 500;
-            font-size: 14px;
+            margin-top: 20px; padding: 12px; border-radius: 12px; font-weight: 500; font-size: 14px;
         }
-        .status.info {
-            background: #e3f2fd;
-            color: #0d47a1;
-        }
-        .status.success {
-            background: #e8f5e9;
-            color: #1b5e20;
-        }
-        .status.error {
-            background: #ffebee;
-            color: #b71c1c;
-        }
+        .status.info { background: #e3f2fd; color: #0d47a1; }
+        .status.success { background: #e8f5e9; color: #1b5e20; }
+        .status.error { background: #ffebee; color: #b71c1c; }
         .progress {
-            width: 100%;
-            height: 6px;
-            background: #e0e0e0;
-            border-radius: 3px;
-            margin-top: 16px;
-            overflow: hidden;
-            display: none;
+            width: 100%; height: 6px; background: #e0e0e0; border-radius: 3px;
+            margin-top: 16px; overflow: hidden; display: none;
         }
-        .progress-bar {
-            height: 100%;
-            width: 0%;
-            background: #1976d2;
-            transition: width 0.3s;
-        }
+        .progress-bar { height: 100%; width: 0%; background: #1976d2; transition: width 0.3s; }
     </style>
 </head>
 <body>
@@ -167,13 +124,12 @@
     const db = firebase.firestore();
     const auth = firebase.auth();
 
-    // Настройки
     const COLLECTION_NAME = "excel_rows";
-    const BATCH_SIZE = 500;          // запись
-    const FETCH_LIMIT = 500;         // чтение с пагинацией
+    const BATCH_SIZE = 500;
+    const FETCH_LIMIT = 500;
     const MAX_RETRIES = 3;
 
-    // ======================== ИНТЕРФЕЙС ========================
+    // ---------------------- UI элементы ----------------------
     const dropZone = document.getElementById('dropZone');
     const fileInput = document.getElementById('fileInput');
     const uploadBtn = document.getElementById('uploadBtn');
@@ -188,24 +144,28 @@
 
     // ---------------------- Аутентификация ----------------------
     async function ensureAuthenticated() {
-        if (auth.currentUser) return auth.currentUser;
-        setStatus('Выполняется анонимный вход...', 'info');
-        const credential = await auth.signInAnonymously();
-        setStatus('Готов к работе.', 'info');
-        return credential.user;
+        if (auth.currentUser) return true;
+        try {
+            setStatus('Выполняется анонимный вход...', 'info');
+            await auth.signInAnonymously();
+            setStatus('Готов к работе.', 'info');
+            return true;
+        } catch (err) {
+            console.warn('Анонимный вход не удался:', err.message);
+            setStatus('⚠️ Аутентификация отключена. Убедитесь, что правила Firestore разрешают открытый доступ.', 'info');
+            return false;
+        }
     }
 
-    // Стартуем анонимную аутентификацию при загрузке страницы
     (async () => {
-        try {
-            await ensureAuthenticated();
-            authReady = true;
-            // Если был выбран файл, разблокируем кнопку
-            if (selectedFile) uploadBtn.disabled = false;
-        } catch (err) {
-            console.error(err);
-            setStatus('❌ Ошибка аутентификации: ' + err.message, 'error');
+        const ok = await ensureAuthenticated();
+        authReady = true;
+        if (ok) {
+            console.log('Аутентификация выполнена');
+        } else {
+            console.log('Продолжаем без аутентификации');
         }
+        if (selectedFile) uploadBtn.disabled = false;
     })();
 
     // ---------------------- Drag-and-drop ----------------------
@@ -223,11 +183,8 @@
             updateFileSelection(e.dataTransfer.files[0]);
         }
     });
-
     fileInput.addEventListener('change', () => {
-        if (fileInput.files.length) {
-            updateFileSelection(fileInput.files[0]);
-        }
+        if (fileInput.files.length) updateFileSelection(fileInput.files[0]);
     });
 
     function updateFileSelection(file) {
@@ -251,24 +208,16 @@
         setStatus('Чтение XLSX...', 'info');
 
         try {
-            // Гарантируем аутентификацию (на случай, если вышли)
             await ensureAuthenticated();
-
-            // 1. Читаем XLSX с преобразованием дат
             const data = await readXlsxFile(selectedFile);
-            if (!data || data.length === 0) {
-                throw new Error('Файл пуст или не содержит строк данных.');
-            }
+            if (!data || data.length === 0) throw new Error('Файл пуст или не содержит строк данных.');
             setStatus(`Файл прочитан: ${data.length} строк. Загрузка в Firestore...`, 'info');
             setProgress(10);
-
-            // 2. Добавляем строки в Firestore с детерминированными ID и retry
             await addRowsToFirestore(data, (progress) => {
                 const pct = 10 + Math.floor(progress * 80);
                 setProgress(pct);
                 setStatus(`Обработано ${Math.round(progress * data.length)} из ${data.length} строк...`, 'info');
             });
-
             setStatus(`✅ Успешно добавлено ${data.length} строк в коллекцию "${COLLECTION_NAME}"`, 'success');
             setProgress(100);
             downloadBtn.style.display = 'inline-block';
@@ -278,9 +227,7 @@
             setProgress(0);
         } finally {
             uploadBtn.disabled = false;
-            setTimeout(() => {
-                progressContainer.style.display = 'none';
-            }, 2000);
+            setTimeout(() => { progressContainer.style.display = 'none'; }, 2000);
         }
     });
 
@@ -292,21 +239,15 @@
         setProgress(0);
         try {
             await ensureAuthenticated();
-
-            // Пагинированное чтение с прогрессом
             const allRows = await fetchAllRowsPaginated((done, totalEstimate) => {
                 if (totalEstimate) {
                     setProgress(Math.round((done / totalEstimate) * 90));
                 } else {
-                    setProgress(Math.min(done / 10, 90)); // индикация активности
+                    setProgress(Math.min(done / 10, 90));
                 }
                 setStatus(`Получено ${done} документов...`, 'info');
             });
-
-            if (allRows.length === 0) {
-                throw new Error('База данных пуста.');
-            }
-
+            if (allRows.length === 0) throw new Error('База данных пуста.');
             setProgress(90);
             const xlsxBlob = generateXlsxBlob(allRows);
             triggerDownload(xlsxBlob, 'firestore_export.xlsx');
@@ -317,9 +258,7 @@
             setStatus(`❌ Ошибка: ${err.message}`, 'error');
         } finally {
             downloadBtn.disabled = false;
-            setTimeout(() => {
-                progressContainer.style.display = 'none';
-            }, 2000);
+            setTimeout(() => { progressContainer.style.display = 'none'; }, 2000);
         }
     });
 
@@ -333,81 +272,62 @@
         progressBar.style.width = `${Math.min(100, Math.max(0, percent))}%`;
     }
 
-    // Чтение XLSX с корректной обработкой дат (cellDates: true)
-function readXlsxFile(file) {
-    return new Promise((resolve, reject) => {
-        if (!file) {
-            return reject(new Error('Файл не выбран.'));
-        }
-        if (!file.name.match(/\.xlsx$/i)) {
-            return reject(new Error('Файл должен иметь расширение .xlsx. Получен: ' + file.name));
-        }
-        if (typeof XLSX === 'undefined') {
-            return reject(new Error('Библиотека XLSX не загружена. Проверьте подключение к CDN.'));
-        }
-
-        const reader = new FileReader();
-        reader.onerror = () => reject(new Error('Ошибка чтения файла. Возможно, файл повреждён.'));
-
-        reader.onload = (e) => {
-            try {
-                const data = new Uint8Array(e.target.result);
-                console.log(`Файл прочитан, размер: ${data.byteLength} байт`);
-
-                // Пробуем прочитать книгу
-                let workbook;
-                try {
-                    workbook = XLSX.read(data, { type: 'array', cellDates: true });
-                } catch (readErr) {
-                    console.error('Ошибка XLSX.read:', readErr);
-                    return reject(new Error('Формат файла не поддерживается или файл повреждён. ' + readErr.message));
-                }
-
-                if (!workbook.SheetNames || workbook.SheetNames.length === 0) {
-                    return reject(new Error('В книге не найдено ни одного листа.'));
-                }
-
-                const firstSheet = workbook.SheetNames[0];
-                const worksheet = workbook.Sheets[firstSheet];
-                if (!worksheet) {
-                    return reject(new Error('Лист "' + firstSheet + '" пуст или повреждён.'));
-                }
-
-                let json;
-                try {
-                    json = XLSX.utils.sheet_to_json(worksheet, { defval: '' });
-                } catch (sheetErr) {
-                    console.error('Ошибка sheet_to_json:', sheetErr);
-                    return reject(new Error('Не удалось преобразовать лист в JSON. ' + sheetErr.message));
-                }
-
-                if (!Array.isArray(json)) {
-                    return reject(new Error('Результат парсинга не является массивом.'));
-                }
-                console.log(`Успешно прочитано строк: ${json.length}`);
-                resolve(json);
-            } catch (err) {
-                console.error('Непредвиденная ошибка:', err);
-                reject(new Error('Внутренняя ошибка при обработке XLSX. ' + err.message));
+    function readXlsxFile(file) {
+        return new Promise((resolve, reject) => {
+            if (!file) return reject(new Error('Файл не выбран.'));
+            if (!file.name.match(/\.xlsx$/i)) {
+                return reject(new Error('Файл должен иметь расширение .xlsx. Получен: ' + file.name));
             }
-        };
+            if (typeof XLSX === 'undefined') {
+                return reject(new Error('Библиотека XLSX не загружена. Проверьте подключение к CDN.'));
+            }
 
-        reader.readAsArrayBuffer(file);
-    });
-}
+            const reader = new FileReader();
+            reader.onerror = () => reject(new Error('Ошибка чтения файла. Возможно, файл повреждён.'));
+            reader.onload = (e) => {
+                try {
+                    const data = new Uint8Array(e.target.result);
+                    console.log(`Файл прочитан, размер: ${data.byteLength} байт`);
+                    let workbook;
+                    try {
+                        workbook = XLSX.read(data, { type: 'array', cellDates: true });
+                    } catch (readErr) {
+                        console.error('Ошибка XLSX.read:', readErr);
+                        return reject(new Error('Формат файла не поддерживается или файл повреждён. ' + readErr.message));
+                    }
+                    if (!workbook.SheetNames || workbook.SheetNames.length === 0) {
+                        return reject(new Error('В книге не найдено ни одного листа.'));
+                    }
+                    const firstSheet = workbook.SheetNames[0];
+                    const worksheet = workbook.Sheets[firstSheet];
+                    if (!worksheet) {
+                        return reject(new Error('Лист "' + firstSheet + '" пуст или повреждён.'));
+                    }
+                    let json;
+                    try {
+                        json = XLSX.utils.sheet_to_json(worksheet, { defval: '' });
+                    } catch (sheetErr) {
+                        console.error('Ошибка sheet_to_json:', sheetErr);
+                        return reject(new Error('Не удалось преобразовать лист в JSON. ' + sheetErr.message));
+                    }
+                    if (!Array.isArray(json)) return reject(new Error('Результат парсинга не является массивом.'));
+                    console.log(`Успешно прочитано строк: ${json.length}`);
+                    resolve(json);
+                } catch (err) {
+                    console.error('Непредвиденная ошибка:', err);
+                    reject(new Error('Внутренняя ошибка при обработке XLSX. ' + err.message));
+                }
+            };
+            reader.readAsArrayBuffer(file);
+        });
+    }
 
-    // Генерация детерминированного ID документа на основе содержимого строки
     function generateDeterministicId(row) {
-        // Превращаем строку в JSON и хешируем (простая замена для избежания коллизий)
         const str = JSON.stringify(row);
-        // Используем btoa для создания строки без сложных зависимостей
-        // Ограничим длину (Firestore допускает до 1500 байт, здесь уложимся в 500 символов)
         let hash = btoa(unescape(encodeURIComponent(str))).substring(0, 500);
-        // Заменяем недопустимые символы в ID (разрешены буквы, цифры, дефисы, подчёркивания)
         return hash.replace(/[^a-zA-Z0-9_-]/g, '_');
     }
 
-    // Повторная попытка выполнения batch.commit() с экспоненциальной задержкой
     async function retryBatchCommit(batch, maxRetries = MAX_RETRIES) {
         for (let attempt = 1; attempt <= maxRetries; attempt++) {
             try {
@@ -421,74 +341,49 @@ function readXlsxFile(file) {
         }
     }
 
-    // Добавление строк в Firestore с детерминированными ID и обработкой ошибок
     async function addRowsToFirestore(rows, progressCallback) {
         const totalBatches = Math.ceil(rows.length / BATCH_SIZE);
-
         for (let i = 0; i < totalBatches; i++) {
             const batch = db.batch();
             const start = i * BATCH_SIZE;
             const end = Math.min(start + BATCH_SIZE, rows.length);
             const chunk = rows.slice(start, end);
-
             chunk.forEach(row => {
                 const docId = generateDeterministicId(row);
                 const docRef = db.collection(COLLECTION_NAME).doc(docId);
                 batch.set(docRef, row);
             });
-
             await retryBatchCommit(batch);
-            if (progressCallback) {
-                progressCallback((i + 1) / totalBatches);
-            }
+            if (progressCallback) progressCallback((i + 1) / totalBatches);
         }
     }
 
-    // Пагинированное получение всех документов с прогрессом
     async function fetchAllRowsPaginated(onProgress) {
         const result = [];
         let lastDoc = null;
         let hasMore = true;
         let totalEstimate = null;
-
-        // Первый запрос также даст оценку общего количества (explain не используем)
         while (hasMore) {
             let query = db.collection(COLLECTION_NAME)
                 .orderBy(firebase.firestore.FieldPath.documentId())
                 .limit(FETCH_LIMIT);
-
-            if (lastDoc) {
-                query = query.startAfter(lastDoc);
-            }
-
+            if (lastDoc) query = query.startAfter(lastDoc);
             const snapshot = await query.get();
             if (snapshot.empty) {
                 hasMore = false;
                 break;
             }
-
-            // Оценка общего количества на основе первого батча
             if (totalEstimate === null) {
-                // snapshot.size даёт только размер текущей порции; делаем приблизительную оценку
                 totalEstimate = snapshot.size < FETCH_LIMIT ? snapshot.size : undefined;
             }
-
             snapshot.forEach(doc => result.push(doc.data()));
             lastDoc = snapshot.docs[snapshot.docs.length - 1];
-
-            if (onProgress) {
-                onProgress(result.length, totalEstimate);
-            }
-
-            if (snapshot.size < FETCH_LIMIT) {
-                hasMore = false;
-            }
+            if (onProgress) onProgress(result.length, totalEstimate);
+            if (snapshot.size < FETCH_LIMIT) hasMore = false;
         }
-
         return result;
     }
 
-    // Генерация XLSX-файла из массива объектов
     function generateXlsxBlob(data) {
         const worksheet = XLSX.utils.json_to_sheet(data);
         const workbook = XLSX.utils.book_new();
@@ -497,7 +392,6 @@ function readXlsxFile(file) {
         return new Blob([xlsxBuffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
     }
 
-    // Скачивание Blob как файла
     function triggerDownload(blob, filename) {
         const url = window.URL.createObjectURL(blob);
         const a = document.createElement('a');
